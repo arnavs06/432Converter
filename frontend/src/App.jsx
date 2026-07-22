@@ -1,0 +1,151 @@
+import { useEffect, useRef, useState } from 'react'
+import { api, openSocket } from './api.js'
+import InputBar from './components/InputBar.jsx'
+import JobCard from './components/JobCard.jsx'
+import SettingsPanel from './components/SettingsPanel.jsx'
+import SetupModal from './components/SetupModal.jsx'
+import StatsBar from './components/StatsBar.jsx'
+import Completed from './components/Completed.jsx'
+
+function GearIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  )
+}
+
+export default function App() {
+  const [config, setConfig] = useState(null)
+  const [needsSetup, setNeedsSetup] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [jobs, setJobs] = useState([])
+  const [stats, setStats] = useState(null)
+  const wsRef = useRef(null)
+
+  // Merge a single track update into the jobs list.
+  const applyTrackUpdate = (jobId, idx, track) => {
+    setJobs((prev) =>
+      prev.map((job) => {
+        if (job.job_id !== jobId) return job
+        const tracks = job.tracks.slice()
+        if (tracks[idx]) tracks[idx] = { ...tracks[idx], ...track }
+        return { ...job, tracks }
+      })
+    )
+  }
+
+  const refreshJobs = async () => {
+    try {
+      const list = await api.getJobs()
+      setJobs(list)
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  const refreshStats = async () => {
+    try {
+      setStats(await api.getStats())
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  // Initial load: config, jobs, stats + open websocket.
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const cfg = await api.getConfig()
+        setConfig(cfg)
+        setNeedsSetup(!cfg.configured)
+      } catch (e) {
+        setNeedsSetup(true)
+      }
+      refreshJobs()
+      refreshStats()
+    })()
+
+    const ws = openSocket((msg) => {
+      if (msg.type === 'init') {
+        if (Array.isArray(msg.jobs)) setJobs(msg.jobs)
+      } else if (msg.type === 'track_update') {
+        applyTrackUpdate(msg.job_id, msg.track_index, msg.track)
+      } else if (msg.type === 'job_created') {
+        refreshJobs()
+      } else if (msg.type === 'job_done') {
+        refreshStats()
+      }
+    })
+    wsRef.current = ws
+    return () => ws.close()
+  }, [])
+
+  const handleConvert = async (url) => {
+    await api.convert(url)
+    await refreshJobs()
+  }
+
+  const handleSaveConfig = async (values) => {
+    const cfg = await api.saveConfig(values)
+    setConfig(cfg)
+    return cfg
+  }
+
+  const handleSetupSave = async (values) => {
+    const cfg = await handleSaveConfig(values)
+    if (cfg.configured) setNeedsSetup(false)
+  }
+
+  const handleRetry = async (jobId, idx, override) => {
+    applyTrackUpdate(jobId, idx, { status: 'queued', error: '', warning: '' })
+    try {
+      await api.retry(jobId, idx, override)
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  return (
+    <div>
+      <div className="topbar">
+        <div className="app-name">
+          432 <span className="hz">Converter</span>
+        </div>
+        <button className="gear-btn" onClick={() => setShowSettings((s) => !s)} title="Settings">
+          <GearIcon />
+        </button>
+      </div>
+
+      {showSettings && config && (
+        <SettingsPanel config={config} onSave={handleSaveConfig} />
+      )}
+
+      <div className="page">
+        <InputBar onConvert={handleConvert} />
+
+        {jobs.length > 0 && (
+          <>
+            <div className="section-title">Queue</div>
+            {jobs.map((job) => (
+              <JobCard key={job.job_id} job={job} onRetry={handleRetry} />
+            ))}
+          </>
+        )}
+
+        {jobs.length === 0 && (
+          <div className="empty-state">
+            Paste a Spotify link above to start converting to 432 Hz.
+          </div>
+        )}
+
+        <Completed jobs={jobs} />
+      </div>
+
+      <StatsBar stats={stats} />
+
+      {needsSetup && <SetupModal onSave={handleSetupSave} />}
+    </div>
+  )
+}
