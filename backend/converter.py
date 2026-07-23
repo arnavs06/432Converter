@@ -26,7 +26,6 @@ from mutagen.id3 import (
     TPE1,
     TPE2,
     TRCK,
-    TYER,
 )
 
 # 432 Hz target: shift each frequency by 12 * log2(432/440) semitones.
@@ -213,7 +212,8 @@ def embed_tags(mp3_path: str, meta: dict) -> None:
 
     year = str(meta.get("year") or "")
     if year:
-        tags.add(TYER(encoding=3, text=year))
+        # mutagen canonicalizes the year to TDRC; on a v2.3 save it emits the
+        # matching TYER frame on disk, so we only need to set TDRC here.
         tags.add(TDRC(encoding=3, text=year))
 
     genre = meta.get("genre") or ""
