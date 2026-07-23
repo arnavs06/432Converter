@@ -40,11 +40,23 @@ def _safe_name(name: str) -> str:
     return name or "Unknown"
 
 
+# Marker appended to every title so 432 Hz tracks are recognizable in players.
+TITLE_SUFFIX = " (432Hz)"
+
+
+def display_title(meta: dict) -> str:
+    """Track title with the 432Hz marker, without doubling it up."""
+    title = (meta.get("title") or "Unknown Title").strip()
+    if "432hz" in title.lower().replace(" ", ""):
+        return title
+    return f"{title}{TITLE_SUFFIX}"
+
+
 def output_path_for(output_dir: str, meta: dict) -> Path:
-    """Compute output_dir/Artist/Album/NN - Title.mp3 for a track."""
+    """Compute output_dir/Artist/Album/NN - Title (432Hz).mp3 for a track."""
     artist = _safe_name(meta.get("album_artist") or meta.get("artist"))
     album = _safe_name(meta.get("album") or "Unknown Album")
-    title = _safe_name(meta.get("title") or "Unknown Title")
+    title = _safe_name(display_title(meta))
     tn = meta.get("track_number") or 0
     filename = f"{int(tn):02d} - {title}.mp3" if tn else f"{title}.mp3"
     return Path(output_dir) / artist / album / filename
@@ -249,7 +261,7 @@ def embed_tags(mp3_path: str, meta: dict) -> None:
     tags.delall("TCON")
     tags.delall("APIC")
 
-    tags.add(TIT2(encoding=3, text=meta.get("title", "")))
+    tags.add(TIT2(encoding=3, text=display_title(meta)))
     tags.add(TPE1(encoding=3, text=meta.get("artist", "")))
     tags.add(TPE2(encoding=3, text=meta.get("album_artist", "")))
     tags.add(TALB(encoding=3, text=meta.get("album", "")))
