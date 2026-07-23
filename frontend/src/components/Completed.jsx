@@ -1,30 +1,11 @@
 import { api } from '../api.js'
 
-// Group completed tracks (across all jobs) by album for the library view.
-export default function Completed({ jobs, player }) {
-  const done = []
-  jobs.forEach((job) => {
-    job.tracks.forEach((t) => {
-      if (t.status === 'done') done.push(t)
-    })
-  })
+// Library view built from the actual files on disk (via /api/library), so
+// every converted track shows up regardless of job history.
+export default function Completed({ albums, player }) {
+  if (!albums || albums.length === 0) return null
 
-  if (done.length === 0) return null
-
-  const groups = {}
-  done.forEach((t) => {
-    const key = `${t.album_artist || t.artist}|||${t.album}`
-    if (!groups[key]) {
-      groups[key] = {
-        album: t.album,
-        artist: t.album_artist || t.artist,
-        cover: t.cover_url,
-        year: t.year,
-        tracks: [],
-      }
-    }
-    groups[key].tracks.push(t)
-  })
+  const totalTracks = albums.reduce((n, a) => n + a.tracks.length, 0)
 
   const reveal = async (path) => {
     if (!path) return
@@ -35,16 +16,16 @@ export default function Completed({ jobs, player }) {
     }
   }
 
-  const groupList = Object.entries(groups)
-
   return (
     <div>
-      <div className="section-title">Library · {done.length} tracks</div>
-      {groupList.map(([key, group]) => (
-        <div className="album-group" key={key}>
+      <div className="section-title">
+        Library · {totalTracks} {totalTracks === 1 ? 'track' : 'tracks'}
+      </div>
+      {albums.map((group, gi) => (
+        <div className="album-group" key={gi}>
           <div className="album-head">
-            {group.cover ? (
-              <img className="album-head-art" src={group.cover} alt="" />
+            {group.cover_path ? (
+              <img className="album-head-art" src={api.coverUrl(group.cover_path)} alt="" />
             ) : (
               <div className="album-head-art art-fallback">♪</div>
             )}

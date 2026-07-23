@@ -342,6 +342,111 @@ def stats():
     }
 
 
+def _safe_output_path(path: str) -> Path:
+    """Resolve a path and ensure it lives inside the configured output dir."""
+    cfg = config.load_config()
+    out_dir = Path(cfg["output_dir"]).resolve()
+    target = Path(path).resolve()
+    target.relative_to(out_dir)  # raises ValueError if outside output_dir
+    return target
+
+
+def _read_track_tags(path: Path) -> dict:
+    """Read the tags 432 Converter writes; fall back to the filename."""
+    from mutagen.id3 import ID3, ID3NoHeaderError
+
+    title = artist = album_artist = album = year = ""
+    track_number = 0
+    has_art = False
+    try:
+        tags = ID3(str(path))
+        title = tags.get("TIT2").text[0] if tags.get("TIT2") else ""
+        artist = tags.get("TPE1").text[0] if tags.get("TPE1") else ""
+        album_artist = tags.get("TPE2").text[0] if tags.get("TPE2") else artist
+        album = tags.get("TALB").text[0] if tags.get("TALB") else ""
+        if tags.get("TDRC"):
+            year = str(tags.get("TDRC").text[0])
+        elif tags.get("TYER"):
+            year = str(tags.get("TYER").text[0])
+        if tags.get("TRCK"):
+            raw = str(tags.get("TRCK").text[0]).split("/")[0]
+            track_number = int(raw) if raw.isdigit() else 0
+        has_art = bool(tags.getall("APIC"))
+    except (ID3NoHeaderError, Exception):  # noqa: BLE001
+        pass
+
+    if not title:
+        title = path.stem
+    if not album_artist:
+        album_artist = artist or path.parent.parent.name
+    if not album:
+        album = path.parent.name
+    return {
+        "title": title,
+        "artist": artist or album_artist,
+        "album_artist": album_artist,
+        "album": album,
+        "year": year,
+        "track_number": track_number,
+        "has_art": has_art,
+        "output_path": str(path),
+    }
+
+
+@app.get("/api/library")
+def library():
+    """Scan the output directory and return converted tracks grouped by album.
+
+    This is the source of truth for what has been converted, independent of
+    in-memory job history, so files from earlier sessions still appear.
+    """
+    cfg = config.load_config()
+    out_dir = Path(cfg["output_dir"])
+    groups: Dict[str, dict] = {}
+    if out_dir.exists():
+        for p in sorted(out_dir.rglob("*.mp3")):
+            info = _read_track_tags(p)
+            key = f"{info['album_artist']}|||{info['album']}"
+            grp = groups.setdefault(key, {
+                "album": info["album"],
+                "artist": info["album_artist"],
+                "year": info["year"],
+                "cover_path": info["output_path"] if info["has_art"] else "",
+                "tracks": [],
+            })
+            if not grp["cover_path"] and info["has_art"]:
+                grp["cover_path"] = info["output_path"]
+            if not grp["year"] and info["year"]:
+                grp["year"] = info["year"]
+            grp["tracks"].append(info)
+    for grp in groups.values():
+        grp["tracks"].sort(key=lambda t: (t["track_number"] or 999, t["title"]))
+    albums = sorted(groups.values(), key=lambda g: (g["artist"].lower(), g["album"].lower()))
+    return {"albums": albums}
+
+
+@app.get("/api/cover")
+def cover(path: str):
+    """Return the embedded front-cover image for a converted MP3."""
+    from fastapi import Response
+    from mutagen.id3 import ID3
+
+    try:
+        target = _safe_output_path(path)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=403, detail="Path not allowed.")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Not found.")
+    try:
+        apics = ID3(str(target)).getall("APIC")
+    except Exception:  # noqa: BLE001
+        apics = []
+    if not apics:
+        raise HTTPException(status_code=404, detail="No cover art.")
+    art = apics[0]
+    return Response(content=art.data, media_type=art.mime or "image/jpeg")
+
+
 @app.get("/api/audio")
 def audio(path: str):
     """Stream a converted MP3 for inline preview playback.

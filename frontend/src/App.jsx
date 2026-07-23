@@ -22,6 +22,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [jobs, setJobs] = useState([])
   const [stats, setStats] = useState(null)
+  const [albums, setAlbums] = useState([])
   const wsRef = useRef(null)
   const audioRef = useRef(null)
   const [playingSrc, setPlayingSrc] = useState('')
@@ -74,6 +75,15 @@ export default function App() {
     }
   }
 
+  const refreshLibrary = async () => {
+    try {
+      const { albums } = await api.getLibrary()
+      setAlbums(albums || [])
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   // Initial load: config, jobs, stats + open websocket.
   useEffect(() => {
     ;(async () => {
@@ -86,6 +96,7 @@ export default function App() {
       }
       refreshJobs()
       refreshStats()
+      refreshLibrary()
     })()
 
     const ws = openSocket((msg) => {
@@ -93,10 +104,16 @@ export default function App() {
         if (Array.isArray(msg.jobs)) setJobs(msg.jobs)
       } else if (msg.type === 'track_update') {
         applyTrackUpdate(msg.job_id, msg.track_index, msg.track)
+        // A track finishing adds a new file to the library.
+        if (msg.track && msg.track.status === 'done') {
+          refreshStats()
+          refreshLibrary()
+        }
       } else if (msg.type === 'job_created') {
         refreshJobs()
       } else if (msg.type === 'job_done') {
         refreshStats()
+        refreshLibrary()
       }
     })
     wsRef.current = ws
@@ -155,7 +172,7 @@ export default function App() {
           </>
         )}
 
-        {jobs.length === 0 && (
+        {activeJobs.length === 0 && albums.length === 0 && (
           <div className="empty-state">
             <div className="empty-fork">🎵</div>
             <div className="empty-title">Retune anything to 432&nbsp;Hz</div>
@@ -166,7 +183,7 @@ export default function App() {
           </div>
         )}
 
-        <Completed jobs={jobs} player={player} />
+        <Completed albums={albums} player={player} />
       </div>
 
       <audio ref={audioRef} onEnded={() => setPlayingSrc('')} hidden />
