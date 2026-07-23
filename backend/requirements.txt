@@ -2,9 +2,6 @@ fastapi
 uvicorn
 spotipy
 yt-dlp
-librosa
-soundfile
-numpy
 mutagen
 requests
 python-multipart

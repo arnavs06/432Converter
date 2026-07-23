@@ -3,7 +3,6 @@
 Deterministic, no AI. Each stage updates a per-track status callback so the
 API/WebSocket layer can stream progress.
 """
-import math
 import os
 import re
 import shutil
@@ -12,10 +11,7 @@ import tempfile
 from difflib import SequenceMatcher
 from pathlib import Path
 
-import librosa
-import numpy as np
 import requests
-import soundfile as sf
 from mutagen.id3 import (
     APIC,
     ID3,
@@ -27,9 +23,6 @@ from mutagen.id3 import (
     TPE2,
     TRCK,
 )
-
-# 432 Hz target: shift each frequency by 12 * log2(432/440) semitones.
-N_STEPS = 12.0 * math.log2(432.0 / 440.0)  # ~= -0.3176
 
 
 def _safe_name(name: str) -> str:
@@ -175,61 +168,38 @@ def title_matches(meta: dict, yt_title: str) -> bool:
     return _fuzzy_ratio(title, yt) >= 0.45
 
 
-def to_mp3_192(src_path: str, tmp_dir: str) -> str:
-    """Transcode any source audio to a 192 kbps MP3 with ffmpeg."""
-    mp3_path = os.path.join(tmp_dir, "intermediate.mp3")
+# Output settings.
+TARGET_SR = 44100
+OUTPUT_BITRATE = "320k"
+# 432 Hz retune as a resample ("turntable") shift: reinterpret the samples at
+# a slightly lower rate, then resample back. This changes pitch by exactly
+# 432/440 with no phase-vocoder smearing, so it stays clean. The track ends up
+# ~1.9% longer, which is the authentic 432 Hz slowdown.
+_SHIFTED_SR = round(TARGET_SR * 432 / 440)  # 43298
+_AF_432 = f"aresample={TARGET_SR},asetrate={_SHIFTED_SR},aresample={TARGET_SR}"
+
+
+def convert_to_432hz_mp3(src_path: str, tmp_dir: str) -> str:
+    """Retune to 432 Hz and encode to a 320 kbps MP3 in one ffmpeg pass.
+
+    Single lossy encode + resample-based pitch shift keeps quality high
+    (no phase vocoder, no intermediate MP3 generation).
+    """
+    final = os.path.join(tmp_dir, "final.mp3")
     cmd = [
         _find_ffmpeg(),
         "-y",
         "-i", src_path,
         "-vn",
+        "-af", _AF_432,
         "-codec:a", "libmp3lame",
-        "-b:a", "192k",
-        mp3_path,
-    ]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if proc.returncode != 0 or not os.path.exists(mp3_path):
-        err = proc.stderr.decode("utf-8", "ignore")[-500:]
-        raise RuntimeError(f"ffmpeg transcode failed: {err}")
-    return mp3_path
-
-
-def pitch_shift_to_432(mp3_path: str, tmp_dir: str) -> str:
-    """Pitch-shift audio to 432 Hz and write a WAV. Handles mono + stereo."""
-    y, sr = librosa.load(mp3_path, sr=None, mono=False)
-
-    if y.ndim == 1:
-        shifted = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=N_STEPS)
-        out = shifted
-    else:
-        channels = [
-            librosa.effects.pitch_shift(y=y[ch], sr=sr, n_steps=N_STEPS)
-            for ch in range(y.shape[0])
-        ]
-        out = np.stack(channels, axis=0)
-
-    wav_path = os.path.join(tmp_dir, "shifted.wav")
-    # soundfile expects (frames, channels)
-    data = out.T if out.ndim > 1 else out
-    sf.write(wav_path, data, sr)
-    return wav_path
-
-
-def encode_final_mp3(wav_path: str, tmp_dir: str) -> str:
-    """Encode the shifted WAV back to a 192 kbps MP3 (no tags yet)."""
-    final = os.path.join(tmp_dir, "final.mp3")
-    cmd = [
-        _find_ffmpeg(),
-        "-y",
-        "-i", wav_path,
-        "-codec:a", "libmp3lame",
-        "-b:a", "192k",
+        "-b:a", OUTPUT_BITRATE,
         final,
     ]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0 or not os.path.exists(final):
         err = proc.stderr.decode("utf-8", "ignore")[-500:]
-        raise RuntimeError(f"ffmpeg encode failed: {err}")
+        raise RuntimeError(f"ffmpeg 432Hz conversion failed: {err}")
     return final
 
 
@@ -321,19 +291,15 @@ def convert_track(meta: dict, output_dir: str, status_cb, query_override: str = 
         if not title_matches(meta, yt_title) and not query_override:
             status_cb("warning", {"yt_title": yt_title})
 
-        # 2. Transcode to MP3 192k
+        # 2. Retune to 432 Hz and encode to 320k MP3 in a single pass.
         status_cb("converting", {})
-        intermediate = to_mp3_192(src, tmp_dir)
+        final_mp3 = convert_to_432hz_mp3(src, tmp_dir)
 
-        # 3 + 4. Pitch shift to 432 Hz, write WAV, re-encode to MP3
-        shifted_wav = pitch_shift_to_432(intermediate, tmp_dir)
-        final_mp3 = encode_final_mp3(shifted_wav, tmp_dir)
-
-        # 5. Move into place
+        # 3. Move into place
         final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(final_mp3, str(final_path))
 
-        # 6. Tag
+        # 4. Tag
         status_cb("tagging", {})
         embed_tags(str(final_path), meta)
 
