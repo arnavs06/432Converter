@@ -218,7 +218,46 @@ def _run_job(job_id: str):
         _process_track(job_id, idx)
         if idx < n - 1 and delay > 0:
             time.sleep(delay)
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job:
+            _write_playlists_for_job(job)
     push_event({"type": "job_done", "job_id": job_id})
+
+
+def _write_playlists_for_job(job: dict):
+    """Write one '[Album] 432Hz.m3u8' per album in a finished job."""
+    out_dir = Path(job["output_dir"])
+    groups: Dict[tuple, list] = {}
+    for track in job["tracks"]:
+        if track.get("status") != "done" or not track.get("output_path"):
+            continue
+        meta = track.get("meta", {})
+        key = (meta.get("album_artist") or meta.get("artist") or "", meta.get("album") or "")
+        groups.setdefault(key, []).append(track)
+
+    for (_artist, album), tracks in groups.items():
+        name = converter._safe_name(f"{album or 'Playlist'} 432Hz")
+        playlist_path = out_dir / f"{name}.m3u8"
+        tracks.sort(key=lambda t: t.get("meta", {}).get("track_number") or 0)
+        lines = ["#EXTM3U"]
+        for t in tracks:
+            meta = t.get("meta", {})
+            dur = int((meta.get("duration_ms") or 0) / 1000)
+            artist = meta.get("artist", "")
+            title = meta.get("title", "")
+            try:
+                rel = os.path.relpath(t["output_path"], out_dir)
+            except ValueError:
+                rel = t["output_path"]
+            lines.append(f"#EXTINF:{dur},{artist} - {title}")
+            lines.append(rel)
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            with open(playlist_path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------
