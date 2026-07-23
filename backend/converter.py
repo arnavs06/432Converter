@@ -214,6 +214,30 @@ def _fetch_cover(url: str) -> bytes:
         return b""
 
 
+def _resize_cover(data: bytes, size: int = 300) -> bytes:
+    """Downscale JPEG cover bytes to size x size with ffmpeg. Returns b'' on failure."""
+    if not data:
+        return b""
+    tmp_dir = tempfile.mkdtemp(prefix="cover_")
+    src = os.path.join(tmp_dir, "in.jpg")
+    out = os.path.join(tmp_dir, "out.jpg")
+    try:
+        with open(src, "wb") as fh:
+            fh.write(data)
+        proc = subprocess.run(
+            [_find_ffmpeg(), "-y", "-i", src, "-vf", f"scale={size}:{size}", "-q:v", "3", out],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        if proc.returncode == 0 and os.path.exists(out):
+            with open(out, "rb") as fh:
+                return fh.read()
+        return b""
+    except OSError:
+        return b""
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def embed_tags(mp3_path: str, meta: dict) -> None:
     """Write ID3v2.3 tags and album art onto the MP3 in place."""
     try:
@@ -253,11 +277,14 @@ def embed_tags(mp3_path: str, meta: dict) -> None:
 
     art = _fetch_cover(meta.get("cover_url", ""))
     if art:
+        # Small (300x300) square cover with an empty description renders more
+        # reliably in Spotify Local Files than the full 640x640 image.
+        art = _resize_cover(art) or art
         tags.add(APIC(
             encoding=3,
             mime="image/jpeg",
             type=3,  # front cover
-            desc="Cover",
+            desc="",
             data=art,
         ))
 
