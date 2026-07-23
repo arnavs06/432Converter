@@ -31,6 +31,7 @@ export const api = {
     req('POST', `/retry/${jobId}/${idx}`, { query_override: queryOverride || null }),
   getStats: () => req('GET', '/stats'),
   reveal: (path) => req('POST', '/reveal', { path }),
+  audioUrl: (path) => `/api/audio?path=${encodeURIComponent(path)}`,
 }
 
 // Open a WebSocket to the backend for live progress events.

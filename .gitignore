@@ -5,6 +5,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# spotipy token cache (contains a short-lived access token)
+backend/.cache
+.cache
+
 # Node / frontend
 frontend/node_modules/
 frontend/dist/

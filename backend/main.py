@@ -4,6 +4,7 @@ Holds all job state in memory, runs conversions on a background thread pool,
 and streams per-track progress over a WebSocket. No database.
 """
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 import config
@@ -41,6 +43,37 @@ EXECUTOR = ThreadPoolExecutor(max_workers=2)
 
 # The event loop is captured at startup so worker threads can push WS events.
 MAIN_LOOP: asyncio.AbstractEventLoop = None
+
+# Terminal statuses that are worth persisting to history.
+_TERMINAL = {"done", "error"}
+
+
+def _persist_jobs():
+    """Write all jobs to disk so history survives restarts. Caller holds lock."""
+    try:
+        config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(config.JOBS_PATH, "w", encoding="utf-8") as fh:
+            json.dump(list(JOBS.values()), fh)
+    except OSError:
+        pass
+
+
+def _load_jobs():
+    """Load persisted jobs on startup; mark any interrupted tracks as errored."""
+    if not config.JOBS_PATH.exists():
+        return
+    try:
+        with open(config.JOBS_PATH, "r", encoding="utf-8") as fh:
+            stored = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return
+    for job in stored:
+        for track in job.get("tracks", []):
+            if track.get("status") not in _TERMINAL:
+                # The worker thread is gone after a restart.
+                track["status"] = "error"
+                track["error"] = track.get("error") or "Interrupted (server restarted)"
+        JOBS[job["job_id"]] = job
 
 
 class WSManager:
@@ -106,7 +139,9 @@ def _new_track_state(meta: dict) -> dict:
         "album_artist": meta.get("album_artist", ""),
         "track_number": meta.get("track_number", 0),
         "cover_url": meta.get("cover_url", ""),
+        "preview_url": meta.get("preview_url", ""),
         "year": meta.get("year", ""),
+        "duration_ms": meta.get("duration_ms", 0),
         "status": "queued",
         "error": "",
         "yt_title": "",
@@ -124,6 +159,9 @@ def _update_track(job_id: str, idx: int, **fields):
         track = job["tracks"][idx]
         track.update(fields)
         snapshot = {k: v for k, v in track.items() if k != "meta"}
+        # Persist when a track reaches a terminal state so history is durable.
+        if fields.get("status") in _TERMINAL:
+            _persist_jobs()
     push_event({
         "type": "track_update",
         "job_id": job_id,
@@ -190,6 +228,8 @@ def _run_job(job_id: str):
 async def _startup():
     global MAIN_LOOP
     MAIN_LOOP = asyncio.get_event_loop()
+    with JOBS_LOCK:
+        _load_jobs()
 
 
 @app.get("/api/config")
@@ -228,6 +268,7 @@ def convert(req: ConvertRequest):
     }
     with JOBS_LOCK:
         JOBS[job_id] = job
+        _persist_jobs()
 
     EXECUTOR.submit(_run_job, job_id)
     push_event({"type": "job_created", "job_id": job_id})
@@ -299,6 +340,24 @@ def stats():
         "size_gb": round(total_bytes / (1024 ** 3), 2),
         "output_dir": str(out_dir),
     }
+
+
+@app.get("/api/audio")
+def audio(path: str):
+    """Stream a converted MP3 for inline preview playback.
+
+    Restricted to files inside the configured output directory.
+    """
+    cfg = config.load_config()
+    out_dir = Path(cfg["output_dir"]).resolve()
+    try:
+        target = Path(path).resolve()
+        target.relative_to(out_dir)  # raises ValueError if outside output_dir
+    except (ValueError, OSError):
+        raise HTTPException(status_code=403, detail="Path not allowed.")
+    if not target.exists() or target.suffix.lower() != ".mp3":
+        raise HTTPException(status_code=404, detail="Audio not found.")
+    return FileResponse(str(target), media_type="audio/mpeg", filename=target.name)
 
 
 class RevealRequest(BaseModel):

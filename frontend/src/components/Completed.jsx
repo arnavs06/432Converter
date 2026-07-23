@@ -1,7 +1,7 @@
 import { api } from '../api.js'
 
 // Group completed tracks (across all jobs) by album for the library view.
-export default function Completed({ jobs }) {
+export default function Completed({ jobs, player }) {
   const done = []
   jobs.forEach((job) => {
     job.tracks.forEach((t) => {
@@ -19,6 +19,7 @@ export default function Completed({ jobs }) {
         album: t.album,
         artist: t.album_artist || t.artist,
         cover: t.cover_url,
+        year: t.year,
         tracks: [],
       }
     }
@@ -34,37 +35,56 @@ export default function Completed({ jobs }) {
     }
   }
 
+  const groupList = Object.entries(groups)
+
   return (
     <div>
-      <div className="section-title">Completed</div>
-      {Object.entries(groups).map(([key, group]) => (
+      <div className="section-title">Library · {done.length} tracks</div>
+      {groupList.map(([key, group]) => (
         <div className="album-group" key={key}>
-          <div className="album-group-title">
-            {group.album || 'Unknown Album'} — {group.artist}
-          </div>
-          {group.tracks.map((t, i) => (
-            <div className="completed-row" key={i}>
-              {t.cover_url ? (
-                <img className="completed-art" src={t.cover_url} alt="" />
-              ) : (
-                <div className="completed-art" />
-              )}
-              <div className="completed-meta">
-                <div className="completed-title">
-                  {t.track_number ? `${t.track_number}. ` : ''}
-                  {t.title}
-                </div>
-                <div className="completed-sub">
-                  {t.artist} · {t.album}
-                </div>
+          <div className="album-head">
+            {group.cover ? (
+              <img className="album-head-art" src={group.cover} alt="" />
+            ) : (
+              <div className="album-head-art art-fallback">♪</div>
+            )}
+            <div className="album-head-meta">
+              <div className="album-head-title">{group.album || 'Unknown Album'}</div>
+              <div className="album-head-sub">
+                {group.artist}
+                {group.year ? ` · ${group.year}` : ''} · {group.tracks.length}{' '}
+                {group.tracks.length === 1 ? 'track' : 'tracks'}
               </div>
-              {t.output_path && (
-                <button className="finder-link" onClick={() => reveal(t.output_path)}>
-                  Show in Finder
-                </button>
-              )}
             </div>
-          ))}
+          </div>
+
+          {group.tracks.map((t, i) => {
+            const src = t.output_path ? api.audioUrl(t.output_path) : ''
+            const isPlaying = player && src && player.playingSrc === src
+            return (
+              <div className="completed-row" key={i}>
+                <button
+                  className={`play-btn${isPlaying ? ' playing' : ''}`}
+                  onClick={() => src && player.togglePlay(src)}
+                  title={isPlaying ? 'Pause' : 'Play'}
+                >
+                  {isPlaying ? '❚❚' : '▶'}
+                </button>
+                <div className="completed-meta">
+                  <div className="completed-title">
+                    {t.track_number ? `${t.track_number}. ` : ''}
+                    {t.title}
+                  </div>
+                  <div className="completed-sub">{t.artist}</div>
+                </div>
+                {t.output_path && (
+                  <button className="finder-link" onClick={() => reveal(t.output_path)}>
+                    Show in Finder
+                  </button>
+                )}
+              </div>
+            )
+          })}
         </div>
       ))}
     </div>

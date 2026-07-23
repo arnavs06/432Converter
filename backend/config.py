@@ -9,6 +9,7 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".432converter"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+JOBS_PATH = CONFIG_DIR / "jobs.json"
 
 DEFAULT_CONFIG = {
     "SPOTIFY_CLIENT_ID": "",

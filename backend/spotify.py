@@ -80,6 +80,7 @@ def _track_from_full(sp, track, album, genre_cache) -> dict:
         "cover_url": cover_url,
         "duration_ms": track.get("duration_ms", 0),
         "spotify_id": track.get("id", ""),
+        "preview_url": track.get("preview_url") or "",
     }
 
 

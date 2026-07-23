@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { api } from '../api.js'
 
 // Ordered pipeline stages -> fraction complete, for the progress bar.
 const STAGE_PROGRESS = {
@@ -21,7 +22,16 @@ const STATUS_LABELS = {
 
 const ACTIVE = new Set(['downloading', 'converting', 'tagging'])
 
-export default function TrackRow({ track, onRetry }) {
+// Pick the best playable source: the converted 432Hz file once done,
+// otherwise the Spotify 30s preview if available.
+function playableSrc(track) {
+  if (track.status === 'done' && track.output_path) {
+    return api.audioUrl(track.output_path)
+  }
+  return track.preview_url || ''
+}
+
+export default function TrackRow({ track, onRetry, player }) {
   const [override, setOverride] = useState('')
   const status = track.status || 'queued'
   const progress = STAGE_PROGRESS[status] ?? 0
@@ -31,9 +41,26 @@ export default function TrackRow({ track, onRetry }) {
   const labelClass =
     status === 'done' ? 'done' : status === 'error' ? 'error' : ''
 
+  const src = playableSrc(track)
+  const isPlaying = player && src && player.playingSrc === src
+
   return (
     <div className="track-row">
       <div className="track-row-main">
+        <div className={`art-thumb${src ? ' playable' : ''}`}
+          onClick={() => src && player.togglePlay(src)}
+          title={src ? (isPlaying ? 'Pause' : 'Play preview') : ''}
+        >
+          {track.cover_url ? (
+            <img src={track.cover_url} alt="" />
+          ) : (
+            <div className="art-fallback">♪</div>
+          )}
+          {src && (
+            <div className="art-play">{isPlaying ? '❚❚' : '▶'}</div>
+          )}
+        </div>
+
         <div className="track-info">
           <div className="track-title">{track.title || 'Untitled'}</div>
           <div className="track-sub">
@@ -67,10 +94,7 @@ export default function TrackRow({ track, onRetry }) {
               value={override}
               onChange={(e) => setOverride(e.target.value)}
             />
-            <button
-              className="small-btn"
-              onClick={() => onRetry(override || null)}
-            >
+            <button className="small-btn" onClick={() => onRetry(override || null)}>
               Retry
             </button>
           </div>
@@ -89,10 +113,7 @@ export default function TrackRow({ track, onRetry }) {
               value={override}
               onChange={(e) => setOverride(e.target.value)}
             />
-            <button
-              className="small-btn"
-              onClick={() => onRetry(override || null)}
-            >
+            <button className="small-btn" onClick={() => onRetry(override || null)}>
               Retry
             </button>
           </div>

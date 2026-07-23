@@ -23,6 +23,27 @@ export default function App() {
   const [jobs, setJobs] = useState([])
   const [stats, setStats] = useState(null)
   const wsRef = useRef(null)
+  const audioRef = useRef(null)
+  const [playingSrc, setPlayingSrc] = useState('')
+
+  // Toggle inline playback: clicking the active track pauses, otherwise plays.
+  const togglePlay = (src) => {
+    if (!src) return
+    const el = audioRef.current
+    if (!el) return
+    if (playingSrc === src) {
+      el.pause()
+      setPlayingSrc('')
+      return
+    }
+    el.src = src
+    el.play().then(() => setPlayingSrc(src)).catch(() => setPlayingSrc(''))
+  }
+  const player = { playingSrc, togglePlay }
+
+  // Queue shows jobs still in flight (or with retryable errors); fully-done
+  // jobs live only in the Completed library below.
+  const activeJobs = jobs.filter((j) => j.tracks.some((t) => t.status !== 'done'))
 
   // Merge a single track update into the jobs list.
   const applyTrackUpdate = (jobId, idx, track) => {
@@ -125,24 +146,30 @@ export default function App() {
       <div className="page">
         <InputBar onConvert={handleConvert} />
 
-        {jobs.length > 0 && (
+        {activeJobs.length > 0 && (
           <>
             <div className="section-title">Queue</div>
-            {jobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onRetry={handleRetry} />
+            {activeJobs.map((job) => (
+              <JobCard key={job.job_id} job={job} onRetry={handleRetry} player={player} />
             ))}
           </>
         )}
 
         {jobs.length === 0 && (
           <div className="empty-state">
-            Paste a Spotify link above to start converting to 432 Hz.
+            <div className="empty-fork">🎵</div>
+            <div className="empty-title">Retune anything to 432&nbsp;Hz</div>
+            <div className="empty-sub">
+              Paste a Spotify track, album, or playlist link above and it lands in
+              your library — pitch-shifted, tagged, and ready for Spotify Local Files.
+            </div>
           </div>
         )}
 
-        <Completed jobs={jobs} />
+        <Completed jobs={jobs} player={player} />
       </div>
 
+      <audio ref={audioRef} onEnded={() => setPlayingSrc('')} hidden />
       <StatsBar stats={stats} />
 
       {needsSetup && <SetupModal onSave={handleSetupSave} />}
