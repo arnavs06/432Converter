@@ -58,10 +58,35 @@ def _find_ffmpeg() -> str:
     return shutil.which("ffmpeg") or "ffmpeg"
 
 
+# How many YouTube results to consider before giving up.
+_SEARCH_CANDIDATES = 6
+
+# Substrings in a yt-dlp error that mean "try the next result", not "abort".
+_SKIPPABLE_ERRORS = (
+    "drm",
+    "video unavailable",
+    "private video",
+    "sign in",
+    "members-only",
+    "removed",
+    "not available",
+    "age",
+)
+
+
+def _source_file(tmp_dir: str):
+    for f in os.listdir(tmp_dir):
+        if f.startswith("source."):
+            return os.path.join(tmp_dir, f)
+    return None
+
+
 def download_audio(meta: dict, tmp_dir: str, query_override: str = None):
     """Search YouTube and download best audio. Returns (audio_path, yt_title).
 
-    Raises RuntimeError on failure.
+    Tries several search results in order, skipping ones that are DRM-protected,
+    private, or otherwise undownloadable, so one bad top hit doesn't fail the
+    track. Raises RuntimeError only if every candidate fails.
     """
     import yt_dlp
 
@@ -71,36 +96,60 @@ def download_audio(meta: dict, tmp_dir: str, query_override: str = None):
         query = f"{meta.get('artist', '')} {meta.get('title', '')} audio".strip()
 
     out_template = os.path.join(tmp_dir, "source.%(ext)s")
-    ydl_opts = {
+
+    # First pass: a flat search just to enumerate candidate videos cheaply.
+    search_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "nocheckcertificate": True,
+    }
+    with yt_dlp.YoutubeDL(search_opts) as ydl:
+        results = ydl.extract_info(
+            f"ytsearch{_SEARCH_CANDIDATES}:{query}", download=False
+        )
+    candidates = [e for e in (results.get("entries") or []) if e]
+    if not candidates:
+        raise RuntimeError("No YouTube result found.")
+
+    dl_opts = {
         "format": "bestaudio/best",
         "outtmpl": out_template,
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
-        "default_search": "ytsearch1",
         "nocheckcertificate": True,
     }
 
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(query, download=True)
-        if "entries" in info:
-            entries = [e for e in info["entries"] if e]
-            if not entries:
-                raise RuntimeError("No YouTube result found.")
-            info = entries[0]
-        yt_title = info.get("title", "")
-        downloaded = ydl.prepare_filename(info)
+    last_error = ""
+    for cand in candidates:
+        video_url = cand.get("url") or cand.get("webpage_url") or cand.get("id")
+        if not video_url:
+            continue
+        # Clear any partial file from a previous failed attempt.
+        stale = _source_file(tmp_dir)
+        if stale:
+            try:
+                os.remove(stale)
+            except OSError:
+                pass
+        try:
+            with yt_dlp.YoutubeDL(dl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=True)
+            yt_title = info.get("title", cand.get("title", ""))
+            downloaded = _source_file(tmp_dir)
+            if downloaded and os.path.exists(downloaded):
+                return downloaded, yt_title
+            last_error = "Download produced no file."
+        except Exception as exc:  # noqa: BLE001 - decide skip vs. abort below
+            msg = str(exc)
+            last_error = msg
+            if any(tok in msg.lower() for tok in _SKIPPABLE_ERRORS):
+                continue  # try the next candidate
+            # Non-skippable (e.g. network); keep trying others but remember it.
+            continue
 
-    if not os.path.exists(downloaded):
-        # yt-dlp may have written a different extension; find the source.* file
-        for f in os.listdir(tmp_dir):
-            if f.startswith("source."):
-                downloaded = os.path.join(tmp_dir, f)
-                break
-    if not os.path.exists(downloaded):
-        raise RuntimeError("Download produced no file.")
-
-    return downloaded, yt_title
+    raise RuntimeError(f"All YouTube candidates failed. Last error: {last_error}")
 
 
 def title_matches(meta: dict, yt_title: str) -> bool:
