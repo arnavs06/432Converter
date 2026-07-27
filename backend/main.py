@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import config
 import converter
+import soundcloud
 import spotify
 
 app = FastAPI(title="432 Converter")
@@ -286,10 +287,15 @@ def post_config(req: ConfigRequest):
 
 @app.post("/api/convert")
 def convert(req: ConvertRequest):
-    if not config.is_configured():
+    is_soundcloud = soundcloud.is_soundcloud_url(req.url)
+    # SoundCloud downloads directly via yt-dlp and needs no Spotify credentials.
+    if not is_soundcloud and not config.is_configured():
         raise HTTPException(status_code=400, detail="Spotify credentials not configured.")
     try:
-        tracks = spotify.fetch_tracks(req.url)
+        if is_soundcloud:
+            tracks = soundcloud.fetch_tracks(req.url)
+        else:
+            tracks = spotify.fetch_tracks(req.url)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc))
     if not tracks:

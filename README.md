@@ -1,12 +1,14 @@
 # 432 Converter
 
-A local web app that converts Spotify tracks, albums, and playlists into
-**432 Hz MP3s** with complete ID3 metadata and album art — ready to drop into
-Spotify's **Local Files** (and Apple Music / YouTube Music).
+A local web app that converts Spotify **and SoundCloud** tracks, albums, and
+playlists into **432 Hz MP3s** with complete ID3 metadata and album art — ready
+to drop into Spotify's **Local Files** (and Apple Music / YouTube Music).
 
-The pipeline is fully deterministic (no AI): it reads metadata from the Spotify
-API, downloads the best matching audio from YouTube, retunes to 432 Hz, and
-writes tagged files organized as `Artist/Album/NN - Title (432Hz).mp3`.
+The pipeline is fully deterministic (no AI). For **Spotify** links it reads
+metadata from the Spotify API and downloads the best matching audio from YouTube.
+For **SoundCloud** links it downloads the exact track directly (no search, no
+Spotify credentials needed) and tags it with SoundCloud's metadata. Either way it
+retunes to 432 Hz and writes tagged files as `Artist/Album/NN - Title (432Hz).mp3`.
 
 ---
 

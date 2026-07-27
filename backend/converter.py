@@ -95,12 +95,33 @@ def download_audio(meta: dict, tmp_dir: str, query_override: str = None):
     """
     import yt_dlp
 
+    out_template = os.path.join(tmp_dir, "source.%(ext)s")
+
+    dl_opts_base = {
+        "format": "bestaudio/best",
+        "outtmpl": out_template,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "nocheckcertificate": True,
+    }
+
+    # Direct-download sources (e.g. SoundCloud) carry an exact URL, so skip the
+    # YouTube search entirely and pull that track. A manual query_override still
+    # forces a fresh YouTube search (used by the retry-with-different-search UI).
+    source_url = meta.get("source_url")
+    if source_url and not query_override:
+        with yt_dlp.YoutubeDL(dl_opts_base) as ydl:
+            info = ydl.extract_info(source_url, download=True)
+        downloaded = _source_file(tmp_dir)
+        if downloaded and os.path.exists(downloaded):
+            return downloaded, info.get("title", meta.get("title", ""))
+        raise RuntimeError("Source download produced no file.")
+
     if query_override:
         query = query_override
     else:
         query = f"{meta.get('artist', '')} {meta.get('title', '')} audio".strip()
-
-    out_template = os.path.join(tmp_dir, "source.%(ext)s")
 
     # First pass: a flat search just to enumerate candidate videos cheaply.
     search_opts = {
@@ -117,14 +138,7 @@ def download_audio(meta: dict, tmp_dir: str, query_override: str = None):
     if not candidates:
         raise RuntimeError("No YouTube result found.")
 
-    dl_opts = {
-        "format": "bestaudio/best",
-        "outtmpl": out_template,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "nocheckcertificate": True,
-    }
+    dl_opts = dl_opts_base
 
     last_error = ""
     for cand in candidates:
