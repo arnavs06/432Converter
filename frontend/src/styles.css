@@ -352,6 +352,11 @@ input {
   background: var(--bg-soft);
 }
 
+/* Secondary action (e.g. Cancel next to Retry) — muted, not accent-colored. */
+.small-btn.ghost {
+  color: var(--text-soft, #888);
+}
+
 /* ---------- Completed section ---------- */
 .album-group {
   margin-bottom: 24px;

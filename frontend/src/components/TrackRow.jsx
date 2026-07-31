@@ -31,7 +31,7 @@ function playableSrc(track) {
   return track.preview_url || ''
 }
 
-export default function TrackRow({ track, onRetry, player }) {
+export default function TrackRow({ track, onRetry, onCancel, player }) {
   const [override, setOverride] = useState('')
   const status = track.status || 'queued'
   const progress = STAGE_PROGRESS[status] ?? 0
@@ -115,6 +115,9 @@ export default function TrackRow({ track, onRetry, player }) {
             />
             <button className="small-btn" onClick={() => onRetry(override || null)}>
               Retry
+            </button>
+            <button className="small-btn ghost" onClick={() => onCancel && onCancel()}>
+              Cancel
             </button>
           </div>
         </div>

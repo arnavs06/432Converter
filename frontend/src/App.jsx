@@ -43,8 +43,11 @@ export default function App() {
   const player = { playingSrc, togglePlay }
 
   // Queue shows jobs still in flight (or with retryable errors); fully-done
-  // jobs live only in the Completed library below.
-  const activeJobs = jobs.filter((j) => j.tracks.some((t) => t.status !== 'done'))
+  // jobs live only in the Completed library below. Cancelled tracks are dropped
+  // from the queue, so a job that's all done-or-cancelled disappears too.
+  const activeJobs = jobs.filter((j) =>
+    j.tracks.some((t) => t.status !== 'done' && t.status !== 'cancelled')
+  )
 
   // Merge a single track update into the jobs list.
   const applyTrackUpdate = (jobId, idx, track) => {
@@ -145,6 +148,15 @@ export default function App() {
     }
   }
 
+  const handleCancel = async (jobId, idx) => {
+    applyTrackUpdate(jobId, idx, { status: 'cancelled', error: '', warning: '' })
+    try {
+      await api.cancel(jobId, idx)
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
   return (
     <div>
       <div className="topbar">
@@ -167,7 +179,7 @@ export default function App() {
           <>
             <div className="section-title">Queue</div>
             {activeJobs.map((job) => (
-              <JobCard key={job.job_id} job={job} onRetry={handleRetry} player={player} />
+              <JobCard key={job.job_id} job={job} onRetry={handleRetry} onCancel={handleCancel} player={player} />
             ))}
           </>
         )}

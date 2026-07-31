@@ -29,6 +29,7 @@ export const api = {
   getStatus: (jobId) => req('GET', `/status/${jobId}`),
   retry: (jobId, idx, queryOverride) =>
     req('POST', `/retry/${jobId}/${idx}`, { query_override: queryOverride || null }),
+  cancel: (jobId, idx) => req('POST', `/cancel/${jobId}/${idx}`),
   getStats: () => req('GET', '/stats'),
   getLibrary: () => req('GET', '/library'),
   reveal: (path) => req('POST', '/reveal', { path }),

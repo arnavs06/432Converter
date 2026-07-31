@@ -45,8 +45,9 @@ EXECUTOR = ThreadPoolExecutor(max_workers=2)
 # The event loop is captured at startup so worker threads can push WS events.
 MAIN_LOOP: asyncio.AbstractEventLoop = None
 
-# Terminal statuses that are worth persisting to history.
-_TERMINAL = {"done", "error"}
+# Terminal statuses that are worth persisting to history. "cancelled" is a
+# user-dismissed errored track: terminal, and hidden from the queue.
+_TERMINAL = {"done", "error", "cancelled"}
 
 
 def _persist_jobs():
@@ -363,6 +364,24 @@ def retry(job_id: str, track_index: int, req: RetryRequest = None):
 
     query_override = req.query_override if req else None
     EXECUTOR.submit(_process_track, job_id, track_index, query_override)
+    return {"ok": True}
+
+
+@app.post("/api/cancel/{job_id}/{track_index}")
+def cancel_track(job_id: str, track_index: int):
+    """Dismiss an errored track: mark it cancelled so it drops out of the queue.
+
+    Uses a terminal status rather than removing the track, which keeps every
+    other track's index stable (retry/cancel reference indices) and avoids
+    racing the worker thread.
+    """
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        if track_index < 0 or track_index >= len(job["tracks"]):
+            raise HTTPException(status_code=404, detail="Track not found.")
+    _update_track(job_id, track_index, status="cancelled", error="", warning="")
     return {"ok": True}
 
 
