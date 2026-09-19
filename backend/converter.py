@@ -229,7 +229,9 @@ def _fetch_cover(url: str) -> bytes:
 
 
 def _resize_cover(data: bytes, size: int = 300) -> bytes:
-    """Downscale JPEG cover bytes to size x size with ffmpeg. Returns b'' on failure."""
+    """Center-crop JPEG cover bytes to a square and downscale to size x size with
+    ffmpeg (square art is untouched by the crop; 16:9 video thumbnails aren't
+    squashed). Returns b'' on failure."""
     if not data:
         return b""
     tmp_dir = tempfile.mkdtemp(prefix="cover_")
@@ -239,7 +241,7 @@ def _resize_cover(data: bytes, size: int = 300) -> bytes:
         with open(src, "wb") as fh:
             fh.write(data)
         proc = subprocess.run(
-            [_find_ffmpeg(), "-y", "-i", src, "-vf", f"scale={size}:{size}", "-q:v", "3", out],
+            [_find_ffmpeg(), "-y", "-i", src, "-vf", f"crop=min(iw\\,ih):min(iw\\,ih),scale={size}:{size}", "-q:v", "3", out],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
         if proc.returncode == 0 and os.path.exists(out):

@@ -36,7 +36,7 @@ export default function InputBar({ onConvert }) {
           <input
             ref={inputRef}
             type="text"
-            placeholder="Paste a Spotify or SoundCloud link (track, album, or playlist)"
+            placeholder="Paste a Spotify, SoundCloud, or YouTube link (track, album, or playlist)"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={onKeyDown}
