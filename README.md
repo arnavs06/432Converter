@@ -1,13 +1,16 @@
 # 432 Converter
 
-A local web app that converts Spotify **and SoundCloud** tracks, albums, and
-playlists into **432 Hz MP3s** with complete ID3 metadata and album art — ready
+A local web app that converts Spotify, SoundCloud, **and YouTube** tracks,
+albums, and playlists into **432 Hz MP3s** with complete ID3 metadata and album art — ready
 to drop into Spotify's **Local Files** (and Apple Music / YouTube Music).
 
 The pipeline is fully deterministic (no AI). For **Spotify** links it reads
 metadata from the Spotify API and downloads the best matching audio from YouTube.
-For **SoundCloud** links it downloads the exact track directly (no search, no
-Spotify credentials needed) and tags it with SoundCloud's metadata. Either way it
+For **SoundCloud** and **YouTube** links it downloads the exact track directly
+(no search, no Spotify credentials needed) and tags it with that source's
+metadata. YouTube tags come from YouTube Music's artist/album/year fields when
+present, otherwise from an "Artist - Title" video title (with "(Official Video)"
+style noise stripped) or the channel name. Either way it
 retunes to 432 Hz and writes tagged files as `Artist/Album/NN - Title (432Hz).mp3`.
 
 ---
@@ -30,6 +33,8 @@ retunes to 432 Hz and writes tagged files as `Artist/Album/NN - Title (432Hz).mp
   audio.
 - **Persistent history** — jobs survive restarts.
 - **Auto playlist** — writes an `[Album] 432Hz.m3u8` per album on download.
+- **Square covers** — art is center-cropped to a 300×300 square, so 16:9 YouTube
+  thumbnails aren't squashed.
 
 ---
 
@@ -79,6 +84,8 @@ Then open <http://localhost:5173>.
 
 ## Getting Spotify API credentials
 
+Only needed for Spotify links; SoundCloud and YouTube work without them.
+
 1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
    and click **Create app**.
 2. Give it any name and description. Check **Web API**. For the redirect URI use
@@ -97,8 +104,10 @@ user login is needed. Credentials and settings are stored locally at
 
 ## Using the app
 
-1. Paste a Spotify **track**, **album**, or **playlist** link into the input bar
-   and press **Convert**.
+1. Paste a Spotify **track**, **album**, or **playlist** link — or a SoundCloud
+   track/set or YouTube video/playlist link — into the input bar and press
+   **Convert**. A YouTube playlist becomes one album named after the playlist; a
+   `watch?v=…&list=…` link converts just that video.
 2. Watch per-track progress. Failed tracks show a red ✗ with the error and a
    **Retry** button. If the matched YouTube title looks wrong, a warning lets you
    override the search query and retry.
@@ -172,6 +181,8 @@ backend/
                    library scan, audio/cover streaming, playlist generation
   converter.py     Download → 432 Hz resample → 320k MP3 → ID3 tag pipeline
   spotify.py       Spotify metadata fetching (track/album/playlist)
+  soundcloud.py    SoundCloud track/set metadata + direct download via yt-dlp
+  youtube.py       YouTube video/playlist metadata + direct download via yt-dlp
   config.py        ~/.432converter/{config,jobs}.json load & save
   requirements.txt
 frontend/
@@ -189,6 +200,9 @@ start.sh
 - Job history is persisted to `~/.432converter/jobs.json`; the **Library** is
   read from the actual files on disk, so earlier downloads always show up.
   Already-converted files are skipped on re-runs.
+- If downloads start failing with **HTTP 403 Forbidden**, YouTube has changed
+  something and yt-dlp needs updating (`start.sh` doesn't upgrade it):
+  `backend/.venv/bin/python -m pip install -U "yt-dlp[default]"`, then restart.
 - For personal use only. Respect copyright and the terms of service of the
   platforms you use.
 ```
