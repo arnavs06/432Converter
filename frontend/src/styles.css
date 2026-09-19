@@ -418,6 +418,61 @@ input {
   text-decoration: underline;
 }
 
+/* ---------- Library track editor ---------- */
+.edit-form {
+  margin: 0 0 12px 46px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+
+.edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px 10px;
+}
+
+.edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-gray);
+  min-width: 0;
+}
+
+.edit-field.wide {
+  grid-column: 1 / -1;
+}
+
+.edit-field input {
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 13px;
+  color: var(--text);
+  background: #fff;
+  outline: none;
+  min-width: 0;
+}
+
+.edit-field input:focus {
+  border-color: var(--accent);
+}
+
+.edit-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-gray);
+}
+
+@media (max-width: 480px) {
+  .edit-form {
+    margin-left: 0;
+  }
+}
+
 /* ---------- Settings panel ---------- */
 .settings-panel {
   border-bottom: 1px solid var(--hairline);

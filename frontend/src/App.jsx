@@ -195,7 +195,7 @@ export default function App() {
           </div>
         )}
 
-        <Completed albums={albums} player={player} />
+        <Completed albums={albums} player={player} onChanged={refreshLibrary} />
       </div>
 
       <audio ref={audioRef} onEnded={() => setPlayingSrc('')} hidden />

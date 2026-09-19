@@ -22,6 +22,7 @@ from mutagen.id3 import (
     TPE1,
     TPE2,
     TRCK,
+    WOAS,
 )
 
 
@@ -35,6 +36,14 @@ def _safe_name(name: str) -> str:
 
 # Marker appended to every title so 432 Hz tracks are recognizable in players.
 TITLE_SUFFIX = " (432Hz)"
+
+
+def strip_title_suffix(title: str) -> str:
+    """Title without the 432Hz marker, for editing."""
+    title = (title or "").strip()
+    if title.endswith(TITLE_SUFFIX.strip()):
+        title = title[: -len(TITLE_SUFFIX.strip())].rstrip()
+    return title
 
 
 def display_title(meta: dict) -> str:
@@ -254,13 +263,8 @@ def _resize_cover(data: bytes, size: int = 300) -> bytes:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def embed_tags(mp3_path: str, meta: dict) -> None:
-    """Write ID3v2.3 tags and album art onto the MP3 in place."""
-    try:
-        tags = ID3(mp3_path)
-    except Exception:
-        tags = ID3()
-
+def _set_text_tags(tags: ID3, meta: dict) -> None:
+    """Replace the text frames 432 Converter manages (not art or source URL)."""
     tags.delall("TIT2")
     tags.delall("TPE1")
     tags.delall("TPE2")
@@ -269,7 +273,6 @@ def embed_tags(mp3_path: str, meta: dict) -> None:
     tags.delall("TYER")
     tags.delall("TDRC")
     tags.delall("TCON")
-    tags.delall("APIC")
 
     tags.add(TIT2(encoding=3, text=display_title(meta)))
     tags.add(TPE1(encoding=3, text=meta.get("artist", "")))
@@ -291,6 +294,23 @@ def embed_tags(mp3_path: str, meta: dict) -> None:
     if genre:
         tags.add(TCON(encoding=3, text=genre))
 
+
+def embed_tags(mp3_path: str, meta: dict) -> None:
+    """Write ID3v2.3 tags, album art, and source URL onto the MP3 in place."""
+    try:
+        tags = ID3(mp3_path)
+    except Exception:
+        tags = ID3()
+
+    _set_text_tags(tags, meta)
+
+    # Remember where direct-download tracks came from (e.g. YouTube) so the
+    # library can tell which files are editable.
+    tags.delall("WOAS")
+    if meta.get("source_url"):
+        tags.add(WOAS(url=meta["source_url"]))
+
+    tags.delall("APIC")
     art = _fetch_cover(meta.get("cover_url", ""))
     if art:
         # Small (300x300) square cover with an empty description renders more
@@ -304,6 +324,13 @@ def embed_tags(mp3_path: str, meta: dict) -> None:
             data=art,
         ))
 
+    tags.save(mp3_path, v2_version=3)
+
+
+def retag_text(mp3_path: str, meta: dict) -> None:
+    """Rewrite only the text tags, keeping embedded art and source URL."""
+    tags = ID3(mp3_path)
+    _set_text_tags(tags, meta)
     tags.save(mp3_path, v2_version=3)
 
 

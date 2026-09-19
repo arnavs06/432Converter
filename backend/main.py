@@ -6,6 +6,7 @@ and streams per-track progress over a WebSocket. No database.
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -423,8 +424,8 @@ def _read_track_tags(path: Path) -> dict:
     """Read the tags 432 Converter writes; fall back to the filename."""
     from mutagen.id3 import ID3, ID3NoHeaderError
 
-    title = artist = album_artist = album = year = ""
-    track_number = 0
+    title = artist = album_artist = album = year = genre = source_url = ""
+    track_number = total_tracks = 0
     has_art = False
     try:
         tags = ID3(str(path))
@@ -437,8 +438,13 @@ def _read_track_tags(path: Path) -> dict:
         elif tags.get("TYER"):
             year = str(tags.get("TYER").text[0])
         if tags.get("TRCK"):
-            raw = str(tags.get("TRCK").text[0]).split("/")[0]
-            track_number = int(raw) if raw.isdigit() else 0
+            parts = str(tags.get("TRCK").text[0]).split("/")
+            track_number = int(parts[0]) if parts[0].isdigit() else 0
+            if len(parts) > 1 and parts[1].isdigit():
+                total_tracks = int(parts[1])
+        genre = tags.get("TCON").text[0] if tags.get("TCON") else ""
+        woas = tags.getall("WOAS")
+        source_url = woas[0].url if woas else ""
         has_art = bool(tags.getall("APIC"))
     except (ID3NoHeaderError, Exception):  # noqa: BLE001
         pass
@@ -456,9 +462,34 @@ def _read_track_tags(path: Path) -> dict:
         "album": album,
         "year": year,
         "track_number": track_number,
+        "total_tracks": total_tracks,
+        "genre": genre,
         "has_art": has_art,
         "output_path": str(path),
+        "source": _source_of(source_url),
     }
+
+
+def _source_of(url: str) -> str:
+    if youtube.is_youtube_url(url):
+        return "youtube"
+    if soundcloud.is_soundcloud_url(url):
+        return "soundcloud"
+    return ""
+
+
+def _job_sources() -> Dict[str, str]:
+    """Map output_path -> source for files converted before tags stored it."""
+    sources: Dict[str, str] = {}
+    with JOBS_LOCK:
+        for job in JOBS.values():
+            job_source = _source_of(job.get("url", ""))
+            for track in job.get("tracks", []):
+                path = track.get("output_path")
+                src = _source_of(track.get("meta", {}).get("source_url", "")) or job_source
+                if path and src:
+                    sources[str(Path(path).resolve())] = src
+    return sources
 
 
 @app.get("/api/library")
@@ -471,9 +502,12 @@ def library():
     cfg = config.load_config()
     out_dir = Path(cfg["output_dir"])
     groups: Dict[str, dict] = {}
+    job_sources = _job_sources()
     if out_dir.exists():
         for p in sorted(out_dir.rglob("*.mp3")):
             info = _read_track_tags(p)
+            if not info["source"]:
+                info["source"] = job_sources.get(str(p.resolve()), "")
             key = f"{info['album_artist']}|||{info['album']}"
             grp = groups.setdefault(key, {
                 "album": info["album"],
@@ -491,6 +525,105 @@ def library():
         grp["tracks"].sort(key=lambda t: (t["track_number"] or 999, t["title"]))
     albums = sorted(groups.values(), key=lambda g: (g["artist"].lower(), g["album"].lower()))
     return {"albums": albums}
+
+
+class EditTrackRequest(BaseModel):
+    path: str
+    title: str
+    artist: str
+    album_artist: str = ""
+    album: str = ""
+    year: str = ""
+    track_number: int = 0
+    genre: str = ""
+
+
+def _prune_empty_dirs(start: Path, stop: Path):
+    """Remove now-empty Artist/Album folders left behind by a rename."""
+    d = start
+    while d != stop and stop in d.parents:
+        try:
+            d.rmdir()  # only succeeds when empty
+        except OSError:
+            break
+        d = d.parent
+
+
+def _repoint_playlists(out_dir: Path, old: Path, new: Path):
+    """Rewrite .m3u8 entries that reference a renamed file."""
+    old_rel = os.path.relpath(old, out_dir)
+    new_rel = os.path.relpath(new, out_dir)
+    for pl in out_dir.glob("*.m3u8"):
+        try:
+            lines = pl.read_text(encoding="utf-8").split("\n")
+        except OSError:
+            continue
+        if old_rel not in lines:
+            continue
+        lines = [new_rel if line == old_rel else line for line in lines]
+        try:
+            pl.write_text("\n".join(lines), encoding="utf-8")
+        except OSError:
+            pass
+
+
+@app.post("/api/library/edit")
+def edit_track(req: EditTrackRequest):
+    """Retag a converted MP3 and rename it to match the new tags.
+
+    The file keeps its embedded art; its path is recomputed as
+    Artist/Album/NN - Title (432Hz).mp3 so the name follows the metadata.
+    """
+    try:
+        target = _safe_output_path(req.path)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=403, detail="Path not allowed.")
+    if not target.exists() or target.suffix.lower() != ".mp3":
+        raise HTTPException(status_code=404, detail="File not found.")
+    if not req.title.strip() or not req.artist.strip():
+        raise HTTPException(status_code=400, detail="Title and artist are required.")
+
+    current = _read_track_tags(target)
+    artist = req.artist.strip()
+    meta = {
+        "title": converter.strip_title_suffix(req.title),
+        "artist": artist,
+        "album_artist": req.album_artist.strip() or artist,
+        "album": req.album.strip() or "Unknown Album",
+        "year": req.year.strip(),
+        "track_number": max(0, req.track_number),
+        "total_tracks": current["total_tracks"],
+        "genre": req.genre.strip(),
+    }
+
+    out_dir = Path(config.load_config()["output_dir"]).resolve()
+    new_path = converter.output_path_for(str(out_dir), meta).resolve()
+    if new_path != target and new_path.exists():
+        raise HTTPException(status_code=409, detail=f"A file already exists at {new_path.name}.")
+
+    try:
+        converter.retag_text(str(target), meta)
+        if new_path != target:
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(target), str(new_path))
+            _prune_empty_dirs(target.parent, out_dir)
+            _repoint_playlists(out_dir, target, new_path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    if new_path != target:
+        # Keep job history pointing at the renamed file (used for source lookup).
+        with JOBS_LOCK:
+            for job in JOBS.values():
+                for track in job.get("tracks", []):
+                    if track.get("output_path") and Path(track["output_path"]).resolve() == target:
+                        track["output_path"] = str(new_path)
+            _persist_jobs()
+
+    info = _read_track_tags(new_path)
+    if not info["source"]:
+        info["source"] = _job_sources().get(str(new_path), "")
+    return info
 
 
 @app.get("/api/cover")

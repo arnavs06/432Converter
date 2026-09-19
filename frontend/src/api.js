@@ -33,6 +33,7 @@ export const api = {
   getStats: () => req('GET', '/stats'),
   getLibrary: () => req('GET', '/library'),
   reveal: (path) => req('POST', '/reveal', { path }),
+  editTrack: (fields) => req('POST', '/library/edit', fields),
   audioUrl: (path) => `/api/audio?path=${encodeURIComponent(path)}`,
   coverUrl: (path) => `/api/cover?path=${encodeURIComponent(path)}`,
 }
